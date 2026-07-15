@@ -6,7 +6,7 @@ A sandboxed multi-language code execution engine — think a mini Judge0.
 - [x] Docker sandbox setup
 - [x] REST API for code submission
 - [x] Multi-language support (Python, JS, C++)
-- [ ] Async job queue with Redis / Celery
+- [x] Async job queue with Redis / Celery
 - [ ] WebSocket real-time output streaming
 - [ ] Rate limiting + per-user resource caps
 - [ ] Frontend editor + auth
