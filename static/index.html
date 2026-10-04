@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>code-engine</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css">
+<style>
+  :root { --bg: #14161a; --panel: #1c1f25; --border: #2c313a; --text: #e6e8eb; --muted: #8b93a1; --accent: #4f8cff; --err: #ff6b6b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0 auto 0 0; }
+  main { display: grid; grid-template-columns: 1fr 1fr; height: calc(100vh - 53px); }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; } }
+  .CodeMirror { height: 100%; font-size: 13px; }
+  #editor-wrap { border-right: 1px solid var(--border); min-height: 0; }
+  #output { margin: 0; padding: 12px 16px; overflow: auto; white-space: pre-wrap; word-break: break-word; font: 13px/1.5 ui-monospace, Menlo, monospace; background: var(--panel); }
+  #output .stderr, #output .error { color: var(--err); }
+  #output .meta { color: var(--muted); }
+  button, select, input { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  #auth { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; }
+  #auth form { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 24px; width: 300px; display: grid; gap: 10px; }
+  #auth h2 { margin: 0 0 4px; font-size: 16px; }
+  #auth-error { color: var(--err); min-height: 1.5em; margin: 0; }
+  .row { display: flex; gap: 8px; }
+  .row button { flex: 1; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <h1>code-engine</h1>
+  <select id="language">
+    <option value="python">Python</option>
+    <option value="javascript">JavaScript</option>
+    <option value="cpp">C++</option>
+  </select>
+  <button id="run" class="primary">Run</button>
+  <span id="who" class="meta"></span>
+  <button id="logout">Sign out</button>
+</header>
+<main>
+  <div id="editor-wrap"><textarea id="editor"></textarea></div>
+  <pre id="output"><span class="meta">Output appears here.</span></pre>
+</main>
+
+<div id="auth" hidden>
+  <form id="auth-form">
+    <h2>Sign in to code-engine</h2>
+    <input id="username" placeholder="Username" autocomplete="username" required>
+    <input id="password" type="password" placeholder="Password (8+ characters)" autocomplete="current-password" required>
+    <p id="auth-error"></p>
+    <div class="row">
+      <button type="submit" class="primary" data-action="login">Sign in</button>
+      <button type="submit" data-action="register">Register</button>
+    </div>
+  </form>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/clike/clike.min.js"></script>
+<script>
+const SAMPLES = {
+  python: 'import time\n\nfor i in range(5):\n    print("tick", i)\n    time.sleep(0.5)\n',
+  javascript: 'for (let i = 0; i < 5; i++) {\n  console.log("tick", i);\n}\n',
+  cpp: '#include <iostream>\n\nint main() {\n    for (int i = 0; i < 5; i++) std::cout << "tick " << i << std::endl;\n    return 0;\n}\n'
+};
+const MODES = { python: 'python', javascript: 'javascript', cpp: 'text/x-c++src' };
+
+const $ = id => document.getElementById(id);
+const editor = CodeMirror.fromTextArea($('editor'), { lineNumbers: true, theme: 'material-darker', mode: 'python', indentUnit: 4 });
+editor.setValue(SAMPLES.python);
+
+let token = sessionStorage.getItem('token');
+let username = sessionStorage.getItem('username');
+
+function showAuth(show) {
+  $('auth').hidden = !show;
+  $('who').textContent = show ? '' : username;
+}
+showAuth(!token);
+
+function append(text, cls) {
+  const span = document.createElement('span');
+  if (cls) span.className = cls;
+  span.textContent = text;
+  $('output').appendChild(span);
+  $('output').scrollTop = $('output').scrollHeight;
+}
+
+$('language').addEventListener('change', e => {
+  const lang = e.target.value;
+  const isSample = Object.values(SAMPLES).includes(editor.getValue());
+  editor.setOption('mode', MODES[lang]);
+  if (isSample) editor.setValue(SAMPLES[lang]);
+});
+
+$('auth-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const action = e.submitter.dataset.action;
+  $('auth-error').textContent = '';
+  const res = await fetch('/' + action, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: $('username').value, password: $('password').value })
+  });
+  const data = await res.json();
+  if (!res.ok) { $('auth-error').textContent = data.error; return; }
+  token = data.token;
+  username = $('username').value;
+  sessionStorage.setItem('token', token);
+  sessionStorage.setItem('username', username);
+  $('password').value = '';
+  showAuth(false);
+});
+
+$('logout').addEventListener('click', () => {
+  token = username = null;
+  sessionStorage.clear();
+  showAuth(true);
+});
+
+$('run').addEventListener('click', async () => {
+  $('output').textContent = '';
+  $('run').disabled = true;
+  const done = () => { $('run').disabled = false; };
+  try {
+    const res = await fetch('/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ language: $('language').value, code: editor.getValue() })
+    });
+    const data = await res.json();
+    if (res.status === 401) { showAuth(true); return done(); }
+    if (!res.ok) { append(data.error + '\n', 'error'); return done(); }
+
+    append('Job ' + data.job_id + ' queued\n', 'meta');
+    const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+    const ws = new WebSocket(proto + location.host + '/ws/' + data.job_id);
+    ws.onopen = () => ws.send(token);
+    ws.onmessage = msg => {
+      const ev = JSON.parse(msg.data);
+      if (ev.event === 'output') append(ev.data, ev.stream === 'stderr' ? 'stderr' : '');
+      else if (ev.event === 'error') append(ev.error + '\n', 'error');
+      else if (ev.event === 'done') {
+        append(ev.error ? '\n' + ev.error + '\n' : '\nExited with code ' + ev.exit_code + '\n', ev.error ? 'error' : 'meta');
+      }
+    };
+    ws.onclose = done;
+    ws.onerror = () => append('Lost the connection to the server.\n', 'error');
+  } catch (err) {
+    append(String(err) + '\n', 'error');
+    done();
+  }
+});
+</script>
+</body>
+</html>
