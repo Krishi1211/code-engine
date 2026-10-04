@@ -104,6 +104,7 @@ def _run(job_id, language, code):
                 DOCKER, "run", "--rm",
                 "--name", container,
                 "--memory", "128m",
+                "--memory-swap", "128m",  # same as --memory: no swap, so the cap is hard
                 "--cpus", "0.5",
                 "--pids-limit", "64",
                 "--network", "none",
